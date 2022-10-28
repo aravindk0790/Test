@@ -1,7 +1,7 @@
 # Hosted Zone
 data "aws_route53_zone" "this" {
   name         = var.route53_zone
-  private_zone = false
+  private_zone = true
 }
 
 # Certificates
