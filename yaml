@@ -1,80 +1,108 @@
----
-image:
+.deploy_template: &deploy_definition
+	stage: deploy
+	image:
+		name: python:3.11.3@sha256:f7382f4f9dbc51183c72d621b9c196c1565f713a1fe40c119d215c961fa22815
+		entrypoint: [""]
+  HTTP_PROXY: http://proxy.local.xxxx.uk:123
+  HTTPS_PROXY: http://proxy.local.xxxx.uk:1123
+  http_proxy: http://proxy.local.xxxxx.uk:2333
+  https_proxy: http://proxy.local.xxxxx.uk:3333
 
-default:
-  tags:
-    - namr
-variables:
-  AWS_ACCOUNT: EKS Dev/Test account
-  AWS_ROLE: 
-  AWS_REGION: 
-  NAMESPACE: 
-  ENVIRONMENT: test
-  HELM_CHART_VERSION: 0.41.4
+	script:
+	  - apk update
+		- apk add --no-cache aws-cli jq curl
+		
+		# Install kubectl and set path		
+		- curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.23.17/2023-05-11/bin/linux/amd64/kubectl
+		- chmod +x ./kubectl
+		- mkdir -p $HOME/bin && cp ./kubectl $HOME/bin/kubectl && export PATH=$HOME/bin:$PATH
+		- mv ./kubectl /usr/local/bin/kubectl
+		- echo 'export PATH=$HOME/bin:$PATH' >> ~/.bashrc
+		- kubectl version --short --client
+		
+		# Assume EKS Namespace Role		
+		- TEMP_ROLE=$(aws sts assume-role --role-arn arn:aws:iam::${AWS_ACCOUNT}:role/${AWS_ROLE} --role-session-name hcs-eks-runner-eks)
+		- export AWS_ACCESS_KEY_ID=$(echo $TEMP_ROLE | jq -r .Credentials.AccessKeyId)
+		- export AWS_SECRET_ACCESS_KEY=$(echo $TEMP_ROLE | jq -r .Credentials.SecretAccessKey)
+		- export AWS_SESSION_TOKEN=$(echo $TEMP_ROLE | jq -r .Credentials.SessionToken)
+		- aws sts get-caller-identity
+	
+	    # Login to ECR
+		- export HELM_EXPERIMENTAL_OCI=1
+		- aws ecr get-login-password --region ${AWS_REGION} | helm registry login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
 
-stages:
-  - credentials
-  # - quality
-  - deploy
-
-aws-credentials:
-  stage: credentials
-  before_script:
-    # Install JQ
-    - apt-get update -y
-    - apt-get install jq -y
-    # Install AWS CLI
-    - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-    - unzip awscliv2.zip
-    - ./aws/install -i /usr/local/aws-cli -b /usr/local/bin
-
-deploy-test:
-  stage: deploy
-  image:
-    name: xxxxxx
-    entrypoint: [""]
-  script:
-    - apk add --no-cache aws-cli jq
-    - apk update  && apk add --no-cache curl
-    - curl xxxxxxxxx
-    - chmod +x ./kubectl
-    - mkdir -p $HOME/bin && cp ./kubectl $HOME/bin/kubectl && export PATH=$HOME/bin:$PATH
-    - mv ./kubectl /usr/local/bin/kubectl
-    - echo 'export PATH=$HOME/bin:$PATH' >> ~/.bashrc
-    - kubectl version --short --client
-    # Assume EKS Namespace Role
-    - TEMP_ROLE=$(aws sts assume-role --role-arn arn:aws:iam::${AWS_ACCOUNT}:role/${AWS_ROLE} --role-session-name hcs-eks-runner-eks)
-    - export AWS_ACCESS_KEY_ID=$(echo $TEMP_ROLE | jq -r .Credentials.AccessKeyId)
-    - export AWS_SECRET_ACCESS_KEY=$(echo $TEMP_ROLE | jq -r .Credentials.SecretAccessKey)
-    - export AWS_SESSION_TOKEN=$(echo $TEMP_ROLE | jq -r .Credentials.SessionToken)
-    - aws sts get-caller-identity
-    # Login to ECR
-    - export HELM_EXPERIMENTAL_OCI=1
-    - aws ecr get-login-password --region eu-west-2 | helm registry login --username AWS --password-stdin xxxxxxxx.dkr.ecr.eu-west-2.amazonaws.com
-    # Login to EKS Cluster
-    - aws eks update-kubeconfig --region eu-west-2 --name pdu-test-eks-cluster
-    - kubectl config view
-    - kubectl config current-context
-    - kubectl config set-context --current --namespace=$NAMESPACE
-
-    # Create common EFS volume used by Content, ZConsole & Wotification-Worker
-    - kubectl apply -f zimp_efs_pvc.yaml -n mobility-zimperium-apps
-    # Configure network policy to allow pods to communicate and ingress from ISTIO gateway
-    - kubectl apply -f ${CI_PROJECT_DIR}/zimp_network_policy.yaml --namespace=$NAMESPACE
-    # install redis component separately
-    - helm upgrade -i elasticcache -n mobility-zimperium-apps k8s/helm/elasticcache --values global.yaml --values k8s_manifest.yaml --wait --debug 
-    # Workaround - deploy dummy email smtp server
-    - kubectl apply -f ${CI_PROJECT_DIR}/zimp_smtp_stub.yaml --namespace=$NAMESPACE
+		# Login to EKS Cluster
+		- aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+		- kubectl config view
+		- kubectl config current-context
+		- kubectl config set-context --current --namespace=$NAMESPACE
+		
+	    # Create common EFS volume used by Content, ZConsole & Wotification-Worker
+		- kubectl apply -f zimp_efs_pvc.yaml -n $NAMESPACE
+		
+		# Configure network policy to allow pods to communicate and ingress from ISTIO gateway
+		- kubectl apply -f ${CI_PROJECT_DIR}/zimp_network_policy.yaml --namespace=$NAMESPACE
+		
+		# install redis component separately
+		- helm upgrade -i elasticcache -n $NAMESPACE k8s/helm/elasticcache --values global_${ENVIRONMENT}.yaml --values k8s_manifest.yaml --wait --debug 
+		
+		# Workaround - deploy dummy email smtp server
+		- kubectl apply -f ${CI_PROJECT_DIR}/zimp_smtp_stub.yaml --namespace=$NAMESPACE
+		
+		# It will show status of the ongoing operation
+		- helm version 
+		- helm ls -a -n $NAMESPACE
+		- chmod +x ./bin/install.sh 
+	
+		# # # Run Zimperium installation script
+		- bin/install.sh -n $NAMESPACE
+		
+		# Configure Ingress to Zimperium via HCS ISTIO gateway
+		- kubectl apply -f ${CI_PROJECT_DIR}/zimp_ingress_${ENVIRONMENT}.yaml --namespace=$NAMESPACE
 
 
-    # It will show status of the ongoing operation
-    - helm version 
-    - helm ls -a -n mobility-zimperium-apps
-    # #- helm rollback <release> 0.1.0 -n $NAMESPACE --wait 
-    - chmod +x ./bin/install.sh 
+deploy:dev:
+    <<: *deploy_definition
+    variables:
+        <<: *global-variables
+		AWS_ACCOUNT: ${AWS_DEV_ACCOUNT}
+		AWS_REGION: ${AWS_REGION}
+		ENVIRONMENT: "dev"
+		NAMESPACE: ${NAMESPACE_DEV}
+    except:
+        - main
+        - /^release-.*$/
 
-    # # # Run Zimperium installation script
-    - bin/install.sh -n $NAMESPACE
-    # Configure Ingress to Zimperium via HCS ISTIO gateway
-    - kubectl apply -f ${CI_PROJECT_DIR}/zimp_ingress_test.yaml --namespace=$NAMESPACE
-
+deploy:test:
+    <<: *deploy_definition
+    variables:
+        <<: *global-variables
+		AWS_ACCOUNT: ${AWS_DEV_ACCOUNT}
+		AWS_REGION: ${AWS_REGION}
+		ENVIRONMENT: "dev"
+		NAMESPACE: ${NAMESPACE_DEV}
+    except:
+        - main
+        - /^release-.*$/
+		
+deploy:stage:
+    <<: *deploy_definition
+    variables:
+        <<: *global-variables
+		AWS_ACCOUNT: ${AWS_STAGE_ACCOUNT}
+		AWS_REGION: ${AWS_REGION}
+		ENVIRONMENT: "stage"
+		NAMESPACE: ${NAMESPACE_STAGE}
+    only:
+        - /^release-.*$/
+		
+deploy:prod:
+    <<: *deploy_definition
+    variables:
+        <<: *global-variables
+		AWS_ACCOUNT: ${AWS_PROD_ACCOUNT}
+		AWS_REGION: ${AWS_REGION}
+		ENVIRONMENT: "prod"
+		NAMESPACE: ${NAMESPACE_PROD}
+    only:
+        - main
