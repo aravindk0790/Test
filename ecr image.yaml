@@ -1,0 +1,133 @@
+- helm version
+   - helm template python -n mobility-zimperium-apps k8s/helm/python  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+   - helm template java -n mobility-zimperium-apps k8s/helm/java  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+   - helm template releasev5 -n mobility-zimperium-apps k8s/helm/releasev5  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+   - helm template kafka -n mobility-zimperium-apps k8s/helm/kafka --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+   - helm template utilities -n mobility-zimperium-apps k8s/helm/utilities  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+   - helm template elasticcache -n mobility-zimperium-apps k8s/helm/elasticcache  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+
+++++++++++++++++++++++++++++++++
+
+
+image: python:xxxxxx@sha256:f7382f4f9dbc51183c72d621b9c196c1565f713a1fe40c119d215c961fa22815
+
+default:
+  tags:
+    - zimperium-hcs-runner
+
+variables:
+  AWS_ACCOUNT: CS EKS Dev/Test account
+  AWS_ROLE: eks-pdu-test-mobility-namespace-admin-role
+  AWS_REGION: eu-west-2
+  NAMESPACE: mobility-zimperium-apps
+  ENVIRONMENT: test
+  HELM_CHART_VERSION: 0.41.4
+  HTTP_PROXY: http://proxy.local
+  HTTPS_PROXY: http://proxy.local.
+  http_proxy: http://proxy.local.
+  https_proxy: http://proxy.local
+
+
+stages:
+  - credentials
+  - build
+  - test
+  - push-image
+  - deploy
+  - app-test
+
+aws-credentials:
+  stage: credentials
+  before_script:
+    # Install JQ
+    - apt-get update -y
+    - apt-get install jq -y
+    # Install AWS CLI
+    - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+    - unzip awscliv2.zip
+    - ./aws/install -i /usr/local/aws-cli -b /usr/local/bin
+  script:
+    # Assume ECR Role
+    - aws sts get-caller-identity
+    - ECR_ROLE=$(aws sts assume-role --role-arn arn:aws:iam::${AWS_ACCOUNT}:role/${AWS_ROLE} --role-session-name zimperium-hcs-runner)
+    - echo $ECR_ROLE | jq -r .Credentials.AccessKeyId > AccessKeyId.txt
+    - echo $ECR_ROLE | jq -r .Credentials.SecretAccessKey > SecretAccessKey.txt
+    - echo $ECR_ROLE | jq -r .Credentials.SessionToken > SessionToken.txt
+    - aws sts get-caller-identity
+  artifacts:
+    paths:
+    - ./AccessKeyId.txt
+    - ./SecretAccessKey.txt
+    - ./SessionToken.txt
+  only:
+    - pushes
+    - schedule
+    - web
+
+docker-build:
+  stage: build
+  image: docker:20.10.24-dind
+  services:
+    - name: docker:dind@sha256:29f11c7c63c84a51c45901701c2d16336c9abc6365d3a69136884b3cf15e2cc9
+      command: ["--registry-mirror=https://docker-cache.nonprod.dwpcloud.uk:5000"]
+  tags:
+    - docker-in-docker
+  before_script:
+    - echo "****** Install AWS CLI ******"
+    - sed -i "s|dl-cdn.alpinelinux.org|nexus.nonprod.dwpcloud.uk/repository|" /etc/apk/repositories
+    # - apk add --no-cache alpine-sdk gcc python3-dev py-pip
+  script:
+    # https://gitlab.com/gitlab-org/gitlab-runner/-/issues/27384#note_497228752
+    - |
+      for i in $(seq 1 30)
+      do
+          docker info && break
+          echo "Waiting for docker to start"
+          sleep 1s
+      done
+    - export no_proxy="$no_proxy,docker"
+    - export NO_PROXY="$NO_PROXY,docker"
+
+    - echo "****** Build Image ******"
+    - echo $jfrog_password |docker login $JFROG_REGISTRY -u $JFROG_USERNAME --password-stdin
+    - docker pull $JFROG_REGISTRY/${image}:${image_tag}
+    - docker tag $JFROG_REGISTRY/${image}:${image_tag} registry.gitlab.com/dwp/mobile-devices/pipeline-fragments/hcs-zimperium/${image}:${image_tag}
+
+    - echo "****** Login to Gitlab CR ******"
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY_IMAGE
+
+    - echo "Push Image to Gitlab CR"
+    - docker push registry.gitlab.com/dwp/mobile-devices/pipeline-fragments/hcs-zimperium/${image}:${image_tag}
+  only:
+    - schedule
+    - web
+
+include:
+  - template: Security/Container-Scanning.gitlab-ci.yml
+    container_scanning:
+    stage: test
+    variables:
+    DOCKER_IMAGE: registry.gitlab.com/dwp/mobile-devices/pipeline-fragments/hcs-zimperium/${image}:${image_tag}
+    
+include:
+  - project: 'dwp/engineering/pipeline-solutions/gitlab/fragments/push-to-ecr'
+    ref: 4.6.1
+    file: 'ci-include-push-to-ecr-base.yml'
+
+push-to-ecr-nonprod:
+  extends: .push-to-ecr
+  stage: test
+  before_script:
+    - echo "****** Begining the process to push images to hcs ecr repo ******"
+    - export AWS_ACCESS_KEY_ID=$(cat ./AccessKeyId.txt)
+    - export AWS_SECRET_ACCESS_KEY=$(cat ./SecretAccessKey.txt)
+    - export AWS_SESSION_TOKEN=$(cat ./SessionToken.txt)
+  variables:
+    CREATE_REPO: 'false'
+    ADD_SSM_PARAM: 'false'
+    PRODUCT: ${image}
+    DEPLOYMENT_ROLE_ARN: arn:aws:iam::9333333333:role/eks-pdu-test-mobility-namespace-admin-role
+    ECR_IMAGE_LOCATION: 9xxxxxxxxxxx.dkr.ecr.eu-west-2.amazonaws.com/pdu-test/tenant/mobility-zimperium/${image}:${image_tag}
+    ACCOUNT_ID: 943009210227 
+    CI_COMMIT_REF_SLUG: ${image}
+    CI_COMMIT_SHA: ${image_tag}
