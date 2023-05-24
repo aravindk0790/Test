@@ -1,0 +1,6 @@
+   - helm template python -n mobility-zimperium-apps k8s/helm/python  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+   - helm template java -n mobility-zimperium-apps k8s/helm/java  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+   - helm template releasev5 -n mobility-zimperium-apps k8s/helm/releasev5  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+   - helm template kafka -n mobility-zimperium-apps k8s/helm/kafka --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+   - helm template utilities -n mobility-zimperium-apps k8s/helm/utilities  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+   - helm template elasticcache -n mobility-zimperium-apps k8s/helm/elasticcache  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
