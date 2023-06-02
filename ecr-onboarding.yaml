@@ -1,0 +1,192 @@
+
+#First we need to generate some AWS credentials and pass them to the docker runner (as were using pdu-runner)
+.python_image:
+  image: python:3.11.3@sha256:f7382f4f9dbc51183c72d621b9c196c1565f713a1fe40c119d215c961fa22815
+  tags:
+    - zimperium-hcs-runner
+
+.aws_credentials:
+  extends: .python_image
+  before_script:
+    - echo "Generating AWS Credentials"
+    - apt-get update -y
+    - apt-get install jq -y
+    - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+    - unzip awscliv2.zip
+    - ./aws/install -i /usr/local/aws-cli -b /usr/local/bin
+  script:
+    - aws sts get-caller-identity
+    - ECR_ROLE=$(aws sts assume-role --role-arn arn:aws:iam::${AWS_ACCOUNT}:role/eks-${PDU_ENV}-mobility-namespace-admin-role --role-session-name zimperium-hcs-runner)
+    - echo $ECR_ROLE | jq -r .Credentials.AccessKeyId > AccessKeyId.txt
+    - echo $ECR_ROLE | jq -r .Credentials.SecretAccessKey > SecretAccessKey.txt
+    - echo $ECR_ROLE | jq -r .Credentials.SessionToken > SessionToken.txt
+  artifacts:
+    paths:
+    - AccessKeyId.txt
+    - SecretAccessKey.txt
+    - SessionToken.txt
+
+.docker_image:
+  image: docker:20.10.24-dind@sha256:7950b072fd43683938a3d73133d473b3c66d3687fe06ddf0c0d2b7f35e289f17
+  services:
+    - name: docker:dind@sha256:2985399fb735fa4c3b6cfba8d1087f011dc4c6f5fde105c9c5a77be472b73836
+      command: ["--registry-mirror=https://docker-cache.nonprod.dwpcloud.uk:5000"]
+  tags:
+    - docker-in-docker
+  before_script:
+    - |
+      for i in $(seq 1 30); do
+        docker info && break
+        echo "Waiting for docker to start"
+        sleep 1s
+      done
+    - export no_proxy="$no_proxy,docker"
+    - export NO_PROXY="$NO_PROXY,docker"
+
+.push_hcs_ecr:
+  extends: .push-to-ecr
+  variables:
+    CREATE_REPO: 'false'
+    ADD_SSM_PARAM: 'false'
+    PRODUCT: ${image}
+    DEPLOYMENT_ROLE_ARN: arn:aws:iam::${AWS_ACCOUNT}:role/eks-${PDU_ENV}-mobility-namespace-admin-role
+    ECR_IMAGE_LOCATION: ${AWS_ACCOUNT}.dkr.ecr.eu-west-2.amazonaws.com/${PDU_ENV}/tenant/mobility-zimperium/${IMAGE}:${TAG}
+    CI_COMMIT_REF_SLUG: ${IMAGE}
+    CI_COMMIT_SHA: ${TAG}
+
+
+
+stages:
+  - scan_image
+  - pull_image
+  - dev_credentials
+  - push_ecr_dev
+  - test_credentials
+  - push_ecr_test
+  - stage_credentials
+  - push_ecr_stage
+  - prod_credentials
+  - push_ecr_prod
+
+include: 
+  - template: Security/Container-Scanning.gitlab-ci.yml
+  - project: 'dwp/engineering/pipeline-solutions/gitlab/fragments/push-to-ecr'
+    ref: 4.6.1
+    file: 'ci-include-push-to-ecr-base.yml'
+
+container_scanning:
+  stage: scan_image
+  variables:
+    CS_REGISTRY_USER: "$JFROG_USERNAME"
+    CS_REGISTRY_PASSWORD: "$JFROG_PASSWORD"
+    CS_IMAGE: "${JFROG_REGISTRY}/${IMAGE}:${TAG}"
+  rules: 
+    - if: ($CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ "/^feat\/.*$/")
+
+pull_zimperium_image:
+  stage: pull_image
+  extends: .docker_image
+  script:
+    # https://gitlab.com/gitlab-org/gitlab-runner/-/issues/27384#note_497228752
+    - echo "****** Build Image ******"
+    - echo $JFROG_PASSWORD |docker login $JFROG_REGISTRY -u $JFROG_USERNAME --password-stdin
+    - docker pull $JFROG_REGISTRY/${IMAGE}:${TAG}
+    - docker tag $JFROG_REGISTRY/${IMAGE}:${TAG} $CI_REGISTRY_IMAGE/${IMAGE}:${TAG}                         #TAG THE IMAGE
+    - echo "****** Login to Gitlab CR ******"
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY_IMAGE                         #LOGIN TO THE CONTAINER REG
+    - echo "Push Image to local CR"
+    - docker push $CI_REGISTRY_IMAGE/${IMAGE}:${TAG}
+  needs: 
+    - container_scanning
+
+dev_credentials:
+  stage: dev_credentials
+  extends: .aws_credentials
+  variables:
+    AWS_ACCOUNT: ${AWS_DEV_ACCOUNT}
+    PDU_ENV: "pdu-dev"
+
+dev_push:
+  stage: push_ecr_dev
+  extends: .push_hcs_ecr
+  dependencies: 
+    - dev_credentials
+  before_script: 
+    - export AWS_ACCESS_KEY_ID=`cat AccessKeyId.txt` 
+    - export AWS_SECRET_ACCESS_KEY=`cat SecretAccessKey.txt` 
+    - export AWS_SESSION_TOKEN=`cat SessionToken.txt` 
+  variables:
+    AWS_ACCOUNT: ${AWS_DEV_ACCOUNT}
+    PDU_ENV: "pdu-dev"
+  needs: 
+    - dev_credentials
+
+test_credentials:
+  stage: test_credentials
+  extends: .aws_credentials
+  variables:
+    AWS_ACCOUNT: ${AWS_TEST_ACCOUNT}
+    PDU_ENV: "pdu-test"
+ 
+test_push:
+  stage: push_ecr_test
+  extends: .push_hcs_ecr
+  dependencies: 
+    - test_credentials
+  script: 
+    - export AWS_ACCESS_KEY_ID=`cat AccessKeyId.txt` 
+    - export AWS_SECRET_ACCESS_KEY=`cat SecretAccessKey.txt` 
+    - export AWS_SESSION_TOKEN=`cat SessionToken.txt` 
+  variables:
+    AWS_ACCOUNT: ${AWS_TEST_ACCOUNT}
+    PDU_ENV: "pdu-test"
+  needs: 
+    - test_credentials
+
+stage_credentials:
+  stage: stage_credentials
+  extends: .aws_credentials
+  variables:
+    AWS_ACCOUNT: ${AWS_STAGE_ACCOUNT}
+    PDU_ENV: "pdu-stage"
+  when: manual
+ 
+stage_push:
+  stage: push_ecr_stage
+  extends: .push_hcs_ecr
+  dependencies: 
+    - stage_credentials
+  script: 
+    - export AWS_ACCESS_KEY_ID=`cat AccessKeyId.txt` 
+    - export AWS_SECRET_ACCESS_KEY=`cat SecretAccessKey.txt` 
+    - export AWS_SESSION_TOKEN=`cat SessionToken.txt` 
+  variables:
+    AWS_ACCOUNT: ${AWS_STAGE_ACCOUNT}
+    PDU_ENV: "pdu-stage"
+  needs: 
+    - stage_credentials
+  when: manual
+
+prod_credentials:
+  stage: prod_credentials
+  extends: .aws_credentials
+  variables:
+    AWS_ACCOUNT: ${AWS_PROD_ACCOUNT}
+    PDU_ENV: "pdu-prod"
+  when: manual
+ 
+prod_push:
+  stage: push_ecr_prod
+  extends: .push_hcs_ecr
+  dependencies: 
+    - prod_credentials
+  script: 
+    - export AWS_ACCESS_KEY_ID=`cat AccessKeyId.txt` 
+    - export AWS_SECRET_ACCESS_KEY=`cat SecretAccessKey.txt` 
+    - export AWS_SESSION_TOKEN=`cat SessionToken.txt` 
+  variables:
+    AWS_ACCOUNT: ${AWS_PROD_ACCOUNT}
+    PDU_ENV: "pdu-prod"
+  needs: 
+    - prod_credentials
+  when: manual
