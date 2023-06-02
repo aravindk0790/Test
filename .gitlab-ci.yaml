@@ -3,9 +3,9 @@ default:
     - hcs-deployment-runner
 
 include:
-  - project: 'dwp/mobile-devices/pipeline-fragments/ecr-onboarding'
-    ref: feature/gsh
-    file: '/.gitlab-ci-ecr-onboarding.yml'
+  - project: 'dwp/mobile-devices/pipeline-fragments/zimperium_deployment'
+    ref: feature/initial_build
+    file: '/.gitlab-ci-zimperium_deployment.yml'
 
 variables:
   HTTP_PROXY: http://proxy.local.dwpcloud.uk:3128
