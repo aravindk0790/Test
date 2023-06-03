@@ -77,6 +77,7 @@ aws-credentials:
     - helm version 
     - helm ls -a -n $NAMESPACE
     - chmod +x ./bin/install.sh 
+    - bin/prep_env.sh
   
     # # # Run Zimperium installation script
     - bin/install.sh -n $NAMESPACE
