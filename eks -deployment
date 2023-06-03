@@ -1,0 +1,339 @@
+#First we need to generate some AWS credentials and pass them to the docker runner (as were using pdu-runner)
+.python_image:
+  image: python:3.11.3@sha256:f7382f4f9dbc51183c72d621b9c196c1565f713a1fe40c119d215c961fa22815
+  tags:
+    - zimperium-hcs-runner
+
+aws-credentials:
+  stage: .python_image
+  before_script:
+    - echo "Generating AWS Credentials"
+    - apt-get update -y
+    - apt-get install jq -y
+    # Install AWS CLI
+    - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+    - unzip awscliv2.zip
+    - ./aws/install -i /usr/local/aws-cli -b /usr/local/bin
+  script:
+    # Assume ECR Role
+    - aws sts get-caller-identity
+    - ECR_ROLE=$(aws sts assume-role --role-arn arn:aws:iam::${AWS_ACCOUNT}:role/${AWS_ROLE} --role-session-name zimperium-hcs-runner)
+    - echo $ECR_ROLE | jq -r .Credentials.AccessKeyId > AccessKeyId.txt
+    - echo $ECR_ROLE | jq -r .Credentials.SecretAccessKey > SecretAccessKey.txt
+    - echo $ECR_ROLE | jq -r .Credentials.SessionToken > SessionToken.txt
+    - aws sts get-caller-identity
+  artifacts:
+    paths:
+    - ./AccessKeyId.txt
+    - ./SecretAccessKey.txt
+    - ./SessionToken.txt
+  
+.deploy:
+  image: zegl/kube-score:latest-helm3@sha256:efabbca3302c632233d6d2e83dec531c7e5b3c5ac5650709f41b0d1ee1b134c7
+  entrypoint: [""]
+    
+  script:
+    - apk update
+    - apk add --no-cache aws-cli jq curl
+
+    # Install kubectl and set path		
+    - curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.23.17/2023-05-11/bin/linux/amd64/kubectl
+    - chmod +x ./kubectl
+    - mkdir -p $HOME/bin && cp ./kubectl $HOME/bin/kubectl && export PATH=$HOME/bin:$PATH
+    - mv ./kubectl /usr/local/bin/kubectl
+    - echo 'export PATH=$HOME/bin:$PATH' >> ~/.bashrc
+    - kubectl version --short --client
+
+    # Assume EKS Namespace Role		
+    - TEMP_ROLE=$(aws sts assume-role --role-arn arn:aws:iam::${AWS_ACCOUNT}:role/${AWS_ROLE} --role-session-name hcs-eks-runner-eks)
+    - export AWS_ACCESS_KEY_ID=$(echo $TEMP_ROLE | jq -r .Credentials.AccessKeyId)
+    - export AWS_SECRET_ACCESS_KEY=$(echo $TEMP_ROLE | jq -r .Credentials.SecretAccessKey)
+    - export AWS_SESSION_TOKEN=$(echo $TEMP_ROLE | jq -r .Credentials.SessionToken)
+    - aws sts get-caller-identity
+  
+    # Login to ECR
+    - export HELM_EXPERIMENTAL_OCI=1
+    - aws ecr get-login-password --region ${AWS_REGION} | helm registry login --username AWS --password-stdin ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com  
+    
+    # Login to EKS Cluster
+    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${ENVIRONMENT}-eks-cluster
+    - kubectl config view
+    - kubectl config current-context
+    - kubectl config set-context --current --namespace=$NAMESPACE
+
+    # Create common EFS volume used by Content, ZConsole & Wotification-Worker
+    - kubectl apply -f zimp_efs_pvc.yaml -n $NAMESPACE
+
+    # Configure network policy to allow pods to communicate and ingress from ISTIO gateway
+    - kubectl apply -f ${CI_PROJECT_DIR}/zimp_network_policy.yaml --namespace=$NAMESPACE
+    
+    # install redis component separately
+    # - helm upgrade -i elasticcache -n $NAMESPACE k8s/helm/elasticcache --values global_${ENVIRONMENT}.yaml --values k8s_manifest.yaml --wait --debug 
+    
+    # Workaround - deploy dummy email smtp server
+    - kubectl apply -f ${CI_PROJECT_DIR}/zimp_smtp_stub.yaml --namespace=$NAMESPACE
+    
+    # It will show status of the ongoing operation
+    - helm version 
+    - helm ls -a -n $NAMESPACE
+    - chmod +x ./bin/install.sh 
+  
+    # # # Run Zimperium installation script
+    - bin/install.sh -n $NAMESPACE
+    
+    # Configure Ingress to Zimperium via HCS ISTIO gateway
+    - kubectl apply -f ${CI_PROJECT_DIR}/zimp_ingress.yaml --namespace=$NAMESPACE
+
+.quality:
+  extends: .aws_credentials
+  image: zegl/kube-score:latest-helm3@sha256:efabbca3302c632233d6d2e83dec531c7e5b3c5ac5650709f41b0d1ee1b134c7
+  entrypoint: [""]
+  script:
+    # Assume EKS Namespace Role	
+    - TEMP_ROLE=$(aws sts assume-role --role-arn arn:aws:iam::${AWS_ACCOUNT}:role/${AWS_ROLE} --role-session-name hcs-eks-runner-eks)
+    - export AWS_ACCESS_KEY_ID=$(echo $TEMP_ROLE | jq -r .Credentials.AccessKeyId)
+    - export AWS_SECRET_ACCESS_KEY=$(echo $TEMP_ROLE | jq -r .Credentials.SecretAccessKey)
+    - export AWS_SESSION_TOKEN=$(echo $TEMP_ROLE | jq -r .Credentials.SessionToken)
+    
+     # Login to EKS Cluster
+    - aws eks update-kubeconfig --region ${AWS_REGION} --name ${ENVIRONMENT}-eks-cluster
+    
+    # Run Kube score on all the application
+    - helm template java -n mobility-zimperium-apps k8s/helm/java  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+    - helm template releasev5 -n mobility-zimperium-apps k8s/helm/releasev5  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+    - helm template kafka -n mobility-zimperium-apps k8s/helm/kafka --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+    - helm template utilities -n mobility-zimperium-apps k8s/helm/utilities  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+    - helm template elasticcache -n mobility-zimperium-apps k8s/helm/elasticcache  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+    - helm template infrastructure -n mobility-zimperium-apps k8s/helm/infrastructure  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+    - helm template python -n mobility-zimperium-apps k8s/helm/python  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+stages:
+  - dev_credentials
+  - dev_deploy
+  - dev_quality
+  - test_credentials
+  - test_deploy
+  - test_quality
+  - stage_credentials
+  - stage_deploy
+  - stage_quality
+  - prod_credentials
+  - prod_deploy
+  - prod_quality
+
+dev_credentials:
+  stage: dev_credentials
+  extends: .aws_credentials    
+  variables:
+      AWS_ACCOUNT: ${AWS_DEV_ACCOUNT}
+      ENVIRONMENT: "pdu-dev"
+      AWS_ROLE: ${AWS_DEV_ROLE}
+      POSTGRES_USERNAME: ${PDU_DEV_POST_USERNAME}
+      POSTGRES_HOST: ${PDU_DEV_POST_HOST}
+      POSTGRES_PASSWORD: ${PDU_DEV_POST_PASSWORD}
+      POSTGRES_PORT: ${PDU_POST_PORT}
+      EFSFILESYSTEMID: ${PDU_DEV_EFSFILESYSTEMID}
+      SUPER_ADMIN_EMAIL: ${DEV_SUPER_ADMIN_EMAIL}
+      SUPER_ADMIN_PASSWORD: ${DEV_SUPER_ADMIN_PASSWORD}
+      POSTGRES_DATABASE: ${PDU_DEV_POST_DB}
+only:
+     - main
+
+dev_deploy:
+  stage: dev_deploy
+  extends: .deploy
+  variables:
+      AWS_ACCOUNT: ${AWS_DEV_ACCOUNT}
+      ENVIRONMENT: "pdu-dev"
+      AWS_ROLE: ${AWS_DEV_ROLE}
+      POSTGRES_USERNAME: ${PDU_DEV_POST_USERNAME}
+      POSTGRES_HOST: ${PDU_DEV_POST_HOST}
+      POSTGRES_PASSWORD: ${PDU_DEV_POST_PASSWORD}
+      POSTGRES_PORT: ${PDU_POST_PORT}
+      EFSFILESYSTEMID: ${PDU_DEV_EFSFILESYSTEMID}
+      SUPER_ADMIN_EMAIL: ${DEV_SUPER_ADMIN_EMAIL}
+      SUPER_ADMIN_PASSWORD: ${DEV_SUPER_ADMIN_PASSWORD}
+      POSTGRES_DATABASE : ${PDU_DEV_POST_DB}
+  only:
+        - main
+
+dev_quality:
+  stage: dev_quality
+  extends: .quality
+  variables:
+      AWS_ACCOUNT: ${AWS_DEV_ACCOUNT}
+      ENVIRONMENT: "pdu-dev"
+      AWS_ROLE: ${AWS_DEV_ROLE}
+      POSTGRES_USERNAME: ${PDU_DEV_POST_USERNAME}
+      POSTGRES_HOST: ${PDU_DEV_POST_HOST}
+      POSTGRES_PASSWORD: ${PDU_DEV_POST_PASSWORD}
+      POSTGRES_PORT: ${PDU_POST_PORT}
+      EFSFILESYSTEMID: ${PDU_DEV_EFSFILESYSTEMID}
+      SUPER_ADMIN_EMAIL: ${DEV_SUPER_ADMIN_EMAIL}
+      SUPER_ADMIN_PASSWORD: ${DEV_SUPER_ADMIN_PASSWORD}
+      POSTGRES_DATABASE : ${PDU_DEV_POST_DB}
+  only:
+       - main
+  when: manual
+test_credentials:
+  stage: test_credentials
+  extends: .aws_credentials    
+  variables:
+      AWS_ACCOUNT: ${AWS_TEST_ACCOUNT}
+      ENVIRONMENT: "pdu-test"
+      AWS_ROLE: ${AWS_TEST_ROLE}
+      POSTGRES_USERNAME: ${PDU_TEST_POST_USERNAME}
+      POSTGRES_HOST: ${PDU_TEST_POST_HOST}
+      POSTGRES_PASSWORD: ${PDU_TEST_POST_PASSWORD}
+      POSTGRES_PORT: ${PDU_POST_PORT}
+      EFSFILESYSTEMID: ${PDU_TEST_EFSFILESYSTEMID}
+      SUPER_ADMIN_EMAIL: ${TEST_SUPER_ADMIN_EMAIL}
+      SUPER_ADMIN_PASSWORD: ${TEST_SUPER_ADMIN_PASSWORD}
+      POSTGRES_DATABASE : ${PDU_TEST_POST_DB}
+  only:
+        - main
+
+test_deploy:
+  stage: test_deploy
+  extends: .deploy
+  variables:
+      AWS_ACCOUNT: ${AWS_TEST_ACCOUNT}
+      ENVIRONMENT: "pdu-test"
+      AWS_ROLE: ${AWS_TEST_ROLE}
+      POSTGRES_USERNAME: ${PDU_TEST_POST_USERNAME}
+      POSTGRES_HOST: ${PDU_TEST_POST_HOST}
+      POSTGRES_PASSWORD: ${PDU_TEST_POST_PASSWORD}
+      POSTGRES_PORT: ${PDU_POST_PORT}
+      EFSFILESYSTEMID: ${PDU_TEST_EFSFILESYSTEMID}
+      SUPER_ADMIN_EMAIL: ${TEST_SUPER_ADMIN_EMAIL}
+      SUPER_ADMIN_PASSWORD: ${TEST_SUPER_ADMIN_PASSWORD}
+      POSTGRES_DATABASE : ${PDU_TEST_POST_DB}
+  only:
+        - main
+
+test_quality:
+  stage: test_quality
+  extends: .quality
+  variables:
+      AWS_ACCOUNT: ${AWS_TEST_ACCOUNT}
+      ENVIRONMENT: "pdu-test"
+      AWS_ROLE: ${AWS_TEST_ROLE}
+      POSTGRES_USERNAME: ${PDU_TEST_POST_USERNAME}
+      POSTGRES_HOST: ${PDU_TEST_POST_HOST}
+      POSTGRES_PASSWORD: ${PDU_TEST_POST_PASSWORD}
+      POSTGRES_PORT: ${PDU_POST_PORT}
+      EFSFILESYSTEMID: ${PDU_TEST_EFSFILESYSTEMID}
+      SUPER_ADMIN_EMAIL: ${TEST_SUPER_ADMIN_EMAIL}
+      SUPER_ADMIN_PASSWORD: ${TEST_SUPER_ADMIN_PASSWORD}
+      POSTGRES_DATABASE : ${PDU_TEST_POST_DB}
+  only:
+        - main
+  when: manual
+stage_credentials:
+  stage: stage_credentials
+  extends: .aws_credentials    
+  variables:
+      AWS_ACCOUNT: ${AWS_STAGE_ACCOUNT}
+      ENVIRONMENT: "pdu-stage"
+      AWS_ROLE: ${AWS_STAGE_ROLE}
+      POSTGRES_USERNAME: ${PDU_STAGE_POST_USERNAME}
+      POSTGRES_HOST: ${PDU_STAGE_POST_HOST}
+      POSTGRES_PASSWORD: ${PDU_STAGE_POST_PASSWORD}
+      POSTGRES_PORT: ${PDU_POST_PORT}
+      EFSFILESYSTEMID: ${PDU_STAGE_EFSFILESYSTEMID}
+      SUPER_ADMIN_EMAIL: ${STAGE_SUPER_ADMIN_EMAIL}
+      SUPER_ADMIN_PASSWORD: ${STAGE_SUPER_ADMIN_PASSWORD}
+      POSTGRES_DATABASE : ${PDU_STAGE_POST_DB}
+  only:
+        - main
+
+stage_deploy:
+  stage: stage_deploy
+  extends: .deploy
+  variables:
+      AWS_ACCOUNT: ${AWS_STAGE_ACCOUNT}
+      ENVIRONMENT: "pdu-stage"
+      AWS_ROLE: ${AWS_STAGE_ROLE}
+      POSTGRES_USERNAME: ${PDU_STAGE_POST_USERNAME}
+      POSTGRES_HOST: ${PDU_STAGE_POST_HOST}
+      POSTGRES_PASSWORD: ${PDU_STAGE_POST_PASSWORD}
+      POSTGRES_PORT: ${PDU_POST_PORT}
+      EFSFILESYSTEMID: ${PDU_STAGE_EFSFILESYSTEMID}
+      SUPER_ADMIN_EMAIL: ${STAGE_SUPER_ADMIN_EMAIL}
+      SUPER_ADMIN_PASSWORD: ${STAGE_SUPER_ADMIN_PASSWORD}
+      POSTGRES_DATABASE : ${PDU_STAGE_POST_DB}
+  only:
+        - main
+
+stage_quality:
+  stage: stage_quality
+  extends: .quality
+  variables:
+      AWS_ACCOUNT: ${AWS_STAGE_ACCOUNT}
+      ENVIRONMENT: "pdu-stage"
+      AWS_ROLE: ${AWS_STAGE_ROLE}
+      POSTGRES_USERNAME: ${PDU_STAGE_POST_USERNAME}
+      POSTGRES_HOST: ${PDU_STAGE_POST_HOST}
+      POSTGRES_PASSWORD: ${PDU_STAGE_POST_PASSWORD}
+      POSTGRES_PORT: ${PDU_POST_PORT}
+      EFSFILESYSTEMID: ${PDU_STAGE_EFSFILESYSTEMID}
+      SUPER_ADMIN_EMAIL: ${STAGE_SUPER_ADMIN_EMAIL}
+      SUPER_ADMIN_PASSWORD: ${STAGE_SUPER_ADMIN_PASSWORD}
+      POSTGRES_DATABASE : ${PDU_STAGE_POST_DB}
+  only:
+        - main
+  when: manual
+
+prod_credentials:
+  stage: prod_credentials
+  extends: .aws_credentials    
+  variables:
+      AWS_ACCOUNT: ${AWS_PRO_ACCOUNT}
+      ENVIRONMENT: "pdu-pro"
+      AWS_ROLE: ${AWS_PRO_ROLE}
+      POSTGRES_USERNAME: ${PDU_PRO_POST_USERNAME}
+      POSTGRES_HOST: ${PDU_PRO_POST_HOST}
+      POSTGRES_PASSWORD: ${PDU_PRO_POST_PASSWORD}
+      POSTGRES_PORT: ${PDU_POST_PORT}
+      EFSFILESYSTEMID: ${PDU_PRO_EFSFILESYSTEMID}
+      SUPER_ADMIN_EMAIL: ${PRO_SUPER_ADMIN_EMAIL}
+      SUPER_ADMIN_PASSWORD: ${PRO_SUPER_ADMIN_PASSWORD}
+      POSTGRES_DATABASE : ${PDU_PRO_POST_DB}
+  only:
+        - main
+
+prod_deploy:
+  stage: prod_deploy
+  extends: .deploy
+  variables:
+      AWS_ACCOUNT: ${AWS_PRO_ACCOUNT}
+      ENVIRONMENT: "pdu-pro"
+      AWS_ROLE: ${AWS_PRO_ROLE}
+      POSTGRES_USERNAME: ${PDU_PRO_POST_USERNAME}
+      POSTGRES_HOST: ${PDU_PRO_POST_HOST}
+      POSTGRES_PASSWORD: ${PDU_PRO_POST_PASSWORD}
+      POSTGRES_PORT: ${PDU_POST_PORT}
+      EFSFILESYSTEMID: ${PDU_PRO_EFSFILESYSTEMID}
+      SUPER_ADMIN_EMAIL: ${PRO_SUPER_ADMIN_EMAIL}
+      SUPER_ADMIN_PASSWORD: ${PRO_SUPER_ADMIN_PASSWORD}
+      POSTGRES_DATABASE : ${PDU_PRO_POST_DB}
+  only:
+        - main
+
+prod_quality:
+  stage: prod_quality
+  extends: .quality
+  variables:
+      AWS_ACCOUNT: ${AWS_PRO_ACCOUNT}
+      ENVIRONMENT: "pdu-pro"
+      AWS_ROLE: ${AWS_PRO_ROLE}
+      POSTGRES_USERNAME: ${PDU_PRO_POST_USERNAME}
+      POSTGRES_HOST: ${PDU_PRO_POST_HOST}
+      POSTGRES_PASSWORD: ${PDU_PRO_POST_PASSWORD}
+      POSTGRES_PORT: ${PDU_POST_PORT}
+      EFSFILESYSTEMID: ${PDU_PRO_EFSFILESYSTEMID}
+      SUPER_ADMIN_EMAIL: ${PRO_SUPER_ADMIN_EMAIL}
+      SUPER_ADMIN_PASSWORD: ${PRO_SUPER_ADMIN_PASSWORD}
+      POSTGRES_DATABASE : ${PDU_PRO_POST_DB}
+  only:
+        - main
+  when: manual
