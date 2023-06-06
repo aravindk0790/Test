@@ -1,0 +1,1 @@
+after we update the secrets and put in cicd varaibles the migration-django helm chart is failed to deploy in pdu-dev .... I have checked the image got correct version in ecr and we are getting below rror 
