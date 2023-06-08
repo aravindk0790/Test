@@ -1,11 +1,7 @@
-Subject: Urgent: Assistance Needed with Migration-Django Pod Authentication Issue
-
-Hi Tom,
-
-I hope this email finds you well. I require some assistance from the Zimperium team regarding an issue we are currently facing. It appears that the migration-django pod has encountered a failure due to password authentication. Strangely, all other services have been deployed successfully, and the problem seems to be isolated to the migration-django service. Unfortunately, I'm unsure as to why this particular service is causing the problem.
-
-Could you kindly arrange a Teams meeting with the Zimperium team at your earliest convenience? I believe it would greatly help us to have a discussion and walk through the issue together. I appreciate your support in resolving this matter promptly.
-
-Thank you,
-
-[Your Name]
+    - helm template java -n mobility-zimperium-apps k8s/helm/java  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+    - helm template releasev5 -n mobility-zimperium-apps k8s/helm/releasev5  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+    - helm template kafka -n mobility-zimperium-apps k8s/helm/kafka --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+    - helm template utilities -n mobility-zimperium-apps k8s/helm/utilities  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+    - helm template elasticcache -n mobility-zimperium-apps k8s/helm/elasticcache  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+    - helm template infrastructure -n mobility-zimperium-apps k8s/helm/infrastructure  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+    - helm template python -n mobility-zimperium-apps k8s/helm/python  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
