@@ -1,7 +1,24 @@
-    - helm template java -n mobility-zimperium-apps k8s/helm/java  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
-    - helm template releasev5 -n mobility-zimperium-apps k8s/helm/releasev5  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
-    - helm template kafka -n mobility-zimperium-apps k8s/helm/kafka --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
-    - helm template utilities -n mobility-zimperium-apps k8s/helm/utilities  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
-    - helm template elasticcache -n mobility-zimperium-apps k8s/helm/elasticcache  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
-    - helm template infrastructure -n mobility-zimperium-apps k8s/helm/infrastructure  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
-    - helm template python -n mobility-zimperium-apps k8s/helm/python  --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+#!/bin/bash
+
+# Command 1
+helm template java -n mobility-zimperium-apps k8s/helm/java --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+
+# Command 2
+helm template releasev5 -n mobility-zimperium-apps k8s/helm/releasev5 --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+
+# Command 3
+helm template kafka -n mobility-zimperium-apps k8s/helm/kafka --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+
+# Command 4
+helm template utilities -n mobility-zimperium-apps k8s/helm/utilities --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+
+# Command 5
+helm template elasticcache -n mobility-zimperium-apps k8s/helm/elasticcache --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+
+# Command 6
+helm template infrastructure -n mobility-zimperium-apps k8s/helm/infrastructure --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+
+# Command 7
+helm template python -n mobility-zimperium-apps k8s/helm/python --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+
+
