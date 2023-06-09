@@ -20,5 +20,14 @@ helm template infrastructure -n mobility-zimperium-apps k8s/helm/infrastructure 
 
 # Command 7
 helm template python -n mobility-zimperium-apps k8s/helm/python --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+Subject: Kube Score Attachment and Inquiry about Alerting
 
+Good morning, David,
+
+Apologies, but I haven't sent the Kube score attachment yet. Could you please forward it to Paneendra and cc Tom, please? Additionally, I inquired with Paneendra about the alerting matter, and he suggested that I check with Vishal regarding it.
+
+Thank you.
+
+Best regards,
+[Your Name]
 
