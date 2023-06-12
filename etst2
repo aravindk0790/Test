@@ -19,4 +19,4 @@ spec:
       - zimperium
   selector:
     matchLabels:
-      app: zimperium 
+      app: zimperium
