@@ -1,0 +1,22 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: zimperiuim-services-monitor
+  namespace: mobility-zimperium-apps
+spec:
+  endpoints:
+    - path: /metrics
+      port: http
+      scheme: https
+      tlsConfig:
+        caFile: /etc/istio-certs/root-cert.pem
+        certFile: /etc/istio-certs/cert-chain.pem
+        insecureSkipVerify: true
+        keyFile: /etc/istio-certs/key.pem
+  jobLabel: pirapi
+  namespaceSelector:
+    matchNames:
+      - zimperium
+  selector:
+    matchLabels:
+      app: zimperium 
