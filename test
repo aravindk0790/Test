@@ -1,1 +1,63 @@
-testttbbb
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  creationTimestamp: null
+  labels:
+    prometheus: mobility-zimperium-apps-prometheus
+    role: alert-rules
+  name: mobility-zimperium-apps-sample-rules
+  namespace: mobility-zimperium-apps
+spec:
+  groups:
+    - name: mobility zimperium services service
+      rules:
+        - alert: mobility zimperium services service - POD Down alert
+          expr: sum by(namespace, pod) (kube_pod_info{created_by_kind!="Job"} and on(namespace, pod) kube_pod_status_ready{condition="false",namespace="mobility-zimperium-apps"} == 1) > 0
+          for: 1m
+          labels:
+            resolver_group: DWP_EXAMPLESVC
+            runbook: ?
+            service_name: Mobility zimperium services
+            subcomponent: PRO_?
+            severity: warning
+            title: mobility zimperium services service - POD Down alert
+        - alert: mobility zimperium services service - Database Connectivity alert
+          expr: ?
+          for: 15m
+          labels:
+            resolver_group: DWP_HCS_SRE
+            runbook: ?
+            service_name: Mobility zimperium services
+            subcomponent: PRO_?
+            severity: warning
+            title: mobility zimperium services service - Database Connectivity alert
+        - alert: mobility zimperium services service - Kafka Connectivity alert
+          expr: ?
+          for: 15m
+          labels:
+            resolver_group: DWP_HCS_SRE
+            runbook: ?
+            service_name: Mobility zimperium services
+            subcomponent: PRO_?
+            severity: warning
+            title: mobility zimperium services service - Kafka Connectivity alert
+        - alert: mobility zimperium services service - Rest Gateway Connectivity alert
+          expr: ?
+          for: 15m
+          labels:
+            resolver_group: DWP_HCS_SRE
+            runbook: ?
+            service_name: Mobility zimperium services
+            subcomponent: PRO_?
+            severity: warning
+            title: mobility zimperium services service - Rest Gateway Connectivity alert
+        - alert: mobility zimperium services service - KMS Connectivity alert
+          expr: ?
+          for: 15m
+          labels:
+            resolver_group: DWP_HCS_SRE
+            runbook: ?
+            service_name: Mobility zimperium services
+            subcomponent: PRO_?
+            severity: warning
+            title: mobility zimperium services service - KMS Connectivity alert
