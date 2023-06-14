@@ -1,0 +1,3 @@
+ wanted to follow up on our call earlier today with Zimperium regarding the implementation of auto-scaling services.
+
+During our conversation, Zimperium provided valuable insights, informing us that only a select few of our services currently have auto-scaling enabled. Unfortunately, the remainder of our services are not supported for auto-scaling at this time.
