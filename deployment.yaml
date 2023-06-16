@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "appdirect.fullname" . }}
+{{- if .Values.global.namespace }}
+  namespace: {{ .Values.global.namespace }}
+{{- end }}
+  labels:
+    {{- range $index, $label := .Values.global.dwp_labels  }}
+    {{ $index }}: {{ $label }}
+    {{- end }}
+    app: {{ include "appdirect.name" . }}
+    chart: {{ include "appdirect.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+    manifest_version: {{ .Values.global.deployed_version }}
+spec:
+  strategy:
+    type: Recreate
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ include "appdirect.name" . }}
+      release: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- range $index, $label := .Values.global.dwp_labels  }}
+        {{ $index }}: {{ $label }}
+        {{- end }}
+        app: {{ include "appdirect.name" . }}
+        release: {{ .Release.Name }}
+        manifest_version: {{ .Values.global.deployed_version }}
+        app_tag: {{ .Values.image.tag }}
+    spec:
+      imagePullSecrets:
+      - name: {{ .Values.global.imagePullSecrets }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+          - configMapRef:
+              name: global-config
+          env:
+          - name: MANAGEMENT_METRICS_EXPORT_STATSD_HOST
+            valueFrom:
+              fieldRef:
+                fieldPath: status.hostIP
+          - name: COM_ZIMPERIUM_SERVER_APPDIRECT_SERVICES_TENANT
+            value: http://{{ .Values.global.tenant_host }}:{{ .Values.global.tenant_port }}/api
+          - name: COM_ZIMPERIUM_SERVER_APPDIRECT_SERVICES_USER
+            value: http://{{ .Values.global.user_host }}:{{ .Values.global.user_port }}/api
+          - name: COM_ZIMPERIUM_SERVER_APPDIRECT_SERVICES_DEVICE
+            value: http://{{ .Values.global.device_host }}:{{ .Values.global.device_port }}/api
+          - name: JVM_HEAP_OPTS
+            value: " "
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          # livenessProbe:
+          #   httpGet:
+          #     path: /actuator/health
+          #     port: http
+          #   initialDelaySeconds: 300
+          #   failureThreshold: 10
+          #   periodSeconds: 30
+          #   successThreshold: 1
+          #   timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            initialDelaySeconds: 30
+            failureThreshold: 10
+            periodSeconds: 30
+            successThreshold: 1
+            timeoutSeconds: 5
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+    {{- with .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- with .Values.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+    {{- end }}
