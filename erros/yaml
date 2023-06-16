@@ -1,0 +1,20 @@
+helm template java -n mobility-zimperium-apps k8s/helm/java --values global.yaml --values k8s_manifest.yaml --wait | kube-score score -
+apps/v1/Deployment appdirect in mobility-zimperium-apps                       💥
+    [OK] Pod Probes
+        · Container is missing a livenessProbe
+            A livenessProbe can be used to restart the container if it's
+            deadlocked or has crashed without exiting. It's only recommended to
+            setup a livenessProbe if you really need one.
+            More information: https://github.com/zegl/kube-score/blob/master/README_PROBES.md
+    [CRITICAL] Container Security Context User Group ID
+        · appdirect -> Container has no configured security context
+            Set securityContext to run the container in a more secure context.
+    [CRITICAL] Pod NetworkPolicy
+        · The pod does not have a matching NetworkPolicy
+            Create a NetworkPolicy that targets this pod to control who/what
+            can communicate with this pod. Note, this feature needs to be
+            supported by the CNI implementation used in the Kubernetes cluster
+            to have an effect.
+    [CRITICAL] Container Security Context ReadOnlyRootFilesystem
+        · appdirect -> Container has no configured security context
+            Set securityContext to run the container in a more secure context.
