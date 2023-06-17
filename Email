@@ -1,0 +1,18 @@
+Subject: Updates and Critical Errors in Kube Score Report
+
+Hi Gordon/Kurt,
+
+I wanted to provide you with some quick updates. I have fixed a few critical errors in the Kube Score and successfully tested and deployed them.
+
+Below is a list of critical errors found in the helm charts:
+
+1) POD network policy: Despite its existence, the network policy is still being flagged as critical. Please note that this network policy is shared across all helm charts.
+
+2) Container security context: I have applied the necessary fix for the helm charts, and the container security context issue has been resolved. However, it seems that the Zimperium pods are failing when this fix is applied.
+
+3) Some helm charts do not require CPU and memory to be set, yet the report is showing critical errors for them.
+
+I kindly request someone from the security team to review this Kube Score report and provide their insights.
+
+Thank you,
+[Your Name]
