@@ -1,7 +1,0 @@
-Grammar and sentence check:
-
-"It's apart. FICO services endpoints are moving from their current solution to AWS SaaS service. So, this request is to whitelist the new endpoints in Santech Connect via B2B proxy in dev/pre. Please see the attached email reference with the ticket."
-
-Revised version:
-
-"It's a part. FICO services endpoints are moving from their current solution to AWS SaaS service. Therefore, this request is to whitelist the new endpoints in Santech Connect via the B2B proxy in the dev/pre environment. Please refer to the attached email for more information, along with the ticket."
