@@ -1,6 +1,0 @@
-Hi Tom,
-
-Thank you for arranging the call today. As discussed, I have attached the Kube-Score critical report for all the Helm charts. I have also made fixes for some of the issues. However, I encountered an error when trying to amend the security context for a container, resulting in the pod failing. I have attached the error logs for your reference. Could you please review these documents and, if possible, help fix some of the critical errors flagged in the Kube-Score report?
-
-Best regards,
-[Your Name]
