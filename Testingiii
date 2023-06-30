@@ -1,0 +1,9 @@
+You can mail like below.
+
+As per my understanding after going through the code, I could see that the backend api's written in java and frontend written in java. So my proposed architecture would be like below.
+
+Frontend (node.js) - Upload the generated dist folder to S3 and host that with Cloudfront distribution or Amplify.
+
+Backend (Java) - Deployed to Lambda integrated with Api Gateway.
+
+Datastore - we might use aurora postgres serverless
