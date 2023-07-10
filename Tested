@@ -1,0 +1,1 @@
+Hi Gordon, I have successfully tested the Node.js application. However, the backend application (Java / Redis) requires some development work, and the build Pom.xml is failing due to dependencies. I have fixed a few, but it still requires further development work. Please find the attached screenshot for your reference.
